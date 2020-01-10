@@ -84,7 +84,7 @@ for DLL to know too much about its environment.
 #include "mmap_anon.h"
 //#include "libavutil/avstring.h"
 //#include "cpudetect.h"
-
+#ifdef __i386__
 static unsigned int c_localcount_tsc(void)
 {
     int a;
@@ -111,6 +111,11 @@ static void c_longcount_tsc(long long* z)
 	 :"edx"
 	);
 }
+#else
+#define c_localcount_tsc c_localcount_notsc
+#define c_longcount_tsc c_longcount_notsc
+
+#endif
 static unsigned int c_localcount_notsc(void)
 {
     struct timeval tv;
@@ -3143,6 +3148,7 @@ static int WINAPI expIsBadStringPtrA(const char* string, int nchars)
 static long WINAPI expInterlockedExchangeAdd( long* dest, long incr )
 {
     long ret;
+#ifdef __i386__
     __asm__ volatile
 	(
 	 "lock; xaddl %0,(%1)"
@@ -3150,6 +3156,9 @@ static long WINAPI expInterlockedExchangeAdd( long* dest, long incr )
 	 : "r" (dest), "0" (incr)
 	 : "memory"
 	);
+#else
+#warning "InterlockedExchangeAdd not implemented yet"
+#endif
     return ret;
 }
 
@@ -4238,6 +4247,7 @@ static int exp_initterm(INITTERMFUNC *start, INITTERMFUNC *end)
 	    // ok this trick with push/pop is necessary as otherwice
 	    // edi/esi registers are being trashed
 	    void* p = *start;
+#ifdef __i386__
 	    __asm__ volatile
 		(
 		 "pushl %%ebx		\n\t"
@@ -4255,6 +4265,9 @@ static int exp_initterm(INITTERMFUNC *start, INITTERMFUNC *end)
 		 : "a"(p)
 		 : "memory"
 		);
+#else
+#warning "initterm not implemented yet"
+#endif
             //printf("done  %p  %d:%d\n", end);
 	}
 	start++;
@@ -4924,6 +4937,7 @@ void exp_EH_prolog(void *dest);
 void exp_EH_prolog_dummy(void);
 //! just a dummy function that acts a container for the asm section
 void exp_EH_prolog_dummy(void) {
+#ifdef __i386__
   __asm__ volatile (
 // take care, this "function" may not change flags or
 // registers besides eax (which is also why we can't use
@@ -4935,6 +4949,9 @@ MANGLE(exp_EH_prolog)":    \n\t"
     "lea   -12(%esp), %esp \n\t"
     "jmp   *%eax           \n\t"
   );
+#else
+#warning "EH not implemented yet"
+#endif
 }
 
 #include <netinet/in.h>
