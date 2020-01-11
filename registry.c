@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "debug.h"
+#include "win32_debug.h"
 
 #include <stdio.h>
 #include <stdlib.h>

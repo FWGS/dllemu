@@ -9,7 +9,7 @@
  *
  */
 #include "config.h"
-#include "debug.h"
+#include "win32_debug.h"
 
 #include <assert.h>
 #include <stdio.h>

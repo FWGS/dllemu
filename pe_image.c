@@ -42,7 +42,7 @@
 #define _DEFAULT_SOURCE
 
 #include "config.h"
-#include "debug.h"
+#include "win32_debug.h"
 
 #include <errno.h>
 #include <assert.h>
@@ -1081,7 +1081,19 @@ WIN_BOOL PE_InitDLL( WINE_MODREF *wm, DWORD type, LPVOID lpReserved )
 	}
 	TRACE("for %s\n", wm->filename);
 	extend_stack_for_dll_alloca();
+
+#if X86EMU
+        // assume single-threaded mode for now
+        extern void *emu;
+        Push32(emu, lpReserved);
+        Push32(emu, type);
+        Push32(emu, wm->module);
+        DynaCall(emu, entry);
+        retv = GetEAX(emu);
+#else
         retv = entry( wm->module, type, lpReserved );
+#endif
+
     }
     TRACE("Exited DllMain()\n");
 

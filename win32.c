@@ -1102,7 +1102,7 @@ static void WINAPI expGetSystemInfo(SYSTEM_INFO* si)
 		    }
 		}
 		/* set the CPU type of the current processor */
-		sprintf(buf,"CPU %ld",cachedsi.dwProcessorType);
+        sprintf(buf,"CPU %ld",cachedsi.dwProcessorType);
 		continue;
 	    }
 	    /* old 2.0 method */
@@ -3157,6 +3157,7 @@ static long WINAPI expInterlockedExchangeAdd( long* dest, long incr )
 	 : "memory"
 	);
 #else
+    /// TODO: implement for X86EMU if possible
 #warning "InterlockedExchangeAdd not implemented yet"
 #endif
     return ret;
@@ -4235,10 +4236,40 @@ static int exp_initterm(int v1, int v2)
 }
 #else
 /* merged from wine - 2002.04.21 */
+#if X86EMU
+#include "emu/x86emu_private.h"
+x86emu_t *emu;
 
 static int exp_initterm(INITTERMFUNC *start, INITTERMFUNC *end)
 {
     dbgprintf("_initterm(0x%x, 0x%x) %p\n", start, end, *start);
+
+    while (start < end)
+    {
+    if (*start)
+    {
+        //printf("call _initfunc: from: %p %d\n", *start);
+        // ok this trick with push/pop is necessary as otherwice
+        // edi/esi registers are being trashed
+        void* p = *start;
+
+        printf("initterm %p %p\n", p, GetESP(emu));
+        int regsi[8];
+        SetEAX(emu, GetESP(emu));
+        printf("initterm %p %p\n", p, GetEAX(emu));
+        memcpy(&regsi, &emu->regs, 32 );
+        DynaCall(emu,p);
+        memcpy(&emu->regs, &regsi, 32 );
+    }
+    start++;
+    }
+    return 0;
+}
+#else
+static int exp_initterm(INITTERMFUNC *start, INITTERMFUNC *end)
+{
+    dbgprintf("_initterm(0x%x, 0x%x) %p\n", start, end, *start);
+
     while (start < end)
     {
 	if (*start)
@@ -4266,7 +4297,7 @@ static int exp_initterm(INITTERMFUNC *start, INITTERMFUNC *end)
 		 : "memory"
 		);
 #else
-#warning "initterm not implemented yet"
+#error "initterm not implemented for this arch"
 #endif
             //printf("done  %p  %d:%d\n", end);
 	}
@@ -4274,6 +4305,7 @@ static int exp_initterm(INITTERMFUNC *start, INITTERMFUNC *end)
     }
     return 0;
 }
+#endif
 #endif
 
 /* Fake _initterm_e from msvcr80.dll, needed by sirenacm.dll
@@ -4305,6 +4337,11 @@ static int expwsprintfA(char* string, const char* format, ...)
 
 static int expsprintf(char* str, const char* format, ...)
 {
+#if X86EMU
+    *str=0;
+    return 0;
+    /// TODO: fix varargs
+#else
     va_list args;
     int r;
     dbgprintf("sprintf(0x%x, %s)\n", str, format);
@@ -4312,6 +4349,7 @@ static int expsprintf(char* str, const char* format, ...)
     r = vsprintf(str, format, args);
     va_end(args);
     return r;
+#endif
 }
 static int expsscanf(const char* str, const char* format, ...)
 {
@@ -4645,11 +4683,18 @@ static void exp_ftol(void)
 
 
 
-
+#if !X86EMU && defined __i386__
 #define FPU_DOUBLES(var1,var2) double var1,var2; \
   __asm__ volatile( "fstpl %0;fwait" : "=m" (var2) : ); \
   __asm__ volatile( "fstpl %0;fwait" : "=m" (var1) : )
-
+#else
+#if X86EMU
+/// TODO: get from emu fpu
+#define FPU_DOUBLES(var1,var2) double var2=0,var1=0;
+#else
+#define FPU_DOUBLES(var1,var2) double var1=0,var2=0;
+#endif
+#endif
 static double exp_CIpow(void)
 {
     FPU_DOUBLES(x,y);
@@ -4719,6 +4764,7 @@ static uint64_t exp_time64(void)
  * undocumented in any M$ doc */
 static int exp_setjmp3(void* jmpbuf, int x)
 {
+#if !X86EMU && defined __i386__
     //dbgprintf("!!!!UNIMPLEMENTED: setjmp3(%p, %d) => 0\n", jmpbuf, x);
     //return 0;
     __asm__ volatile
@@ -4754,7 +4800,7 @@ static int exp_setjmp3(void* jmpbuf, int x)
 	 :
 	 : "eax"
 	);
-
+#endif
 	return 0;
 }
 
@@ -4937,7 +4983,7 @@ void exp_EH_prolog(void *dest);
 void exp_EH_prolog_dummy(void);
 //! just a dummy function that acts a container for the asm section
 void exp_EH_prolog_dummy(void) {
-#ifdef __i386__
+#if !X86EMU && defined __i386__
   __asm__ volatile (
 // take care, this "function" may not change flags or
 // registers besides eax (which is also why we can't use
@@ -5187,10 +5233,16 @@ static double expfloor(double x)
     //dbgprintf("floor(%f)\n", x);
     return floor(x);
 }
-
+#if !X86EMU && defined __i386__
 #define FPU_DOUBLE(var) double var; \
   __asm__ volatile( "fstpl %0;fwait" : "=m" (var) : )
-
+#else
+#if X86EMU
+#define FPU_DOUBLE(var) double var = 0; /// todo: use emu fpu
+#else
+#define FPU_DOUBLE(var) double var = 0;
+#endif
+#endif
 LONG64 exp_ftol(void)
 {
   FPU_DOUBLE(x);
@@ -5342,6 +5394,8 @@ struct exports
     char name[64];
     int id;
     void* func;
+    void *wrapper;
+    const char *wrapper_name;
 };
 struct libs
 {
@@ -5356,187 +5410,210 @@ struct glfuncs
     void *winfunc; // stdcall function
     void **glfunc; // pointer to real function
 };
-
-#define FF(X,Y) \
-    {#X, Y, (void*)exp##X},
+#if X86EMU
+#define FF(X,Y,Z) \
+{#X, Y, (void*)exp##X, Z, #Z},
 
 #define GLFF(X) \
     {#X, (void*)exp##X, (void**)&ldrp##X},
 
 #define UNDEFF(X, Y) \
     {#X, Y, (void*)-1},
-#define WRFF(X) \
-    {#X, -1, (void*)&X},
+#define WRFF(X, Z) \
+{#X, -1, (void*)&X, Z, #Z},
+#include "wrapped/generated/wrapper.h"
+#else
+#define FF(X,Y,Z) \
+{#X, Y, (void*)exp##X},
+
+#define GLFF(X) \
+    {#X, (void*)exp##X, (void**)&ldrp##X},
+
+#define UNDEFF(X, Y) \
+    {#X, Y, (void*)-1},
+#define WRFF(X, Z) \
+{#X, -1, (void*)&X},
+#define vFp 0
+#define pFu 0
+#define iFipu 0
+#define iFpu 0
+#define iFpp 0
+#define iFi 0
+#define pFv 0
+#define iFp 0
+#define vFv 0
+#define iFupp 0
+#endif
 static const struct exports exp_kernel32[]=
 {
-    FF(GetVolumeInformationA,-1)
-    FF(GetDriveTypeA,-1)
-    FF(GetLogicalDriveStringsA,-1)
-    FF(IsBadWritePtr, 357)
-    FF(IsBadReadPtr, 354)
-    FF(IsBadStringPtrW, -1)
-    FF(IsBadStringPtrA, -1)
-    FF(DisableThreadLibraryCalls, -1)
-    FF(CreateThread, -1)
-    FF(ResumeThread, -1)
-    FF(CreateEventA, -1)
-    FF(CreateEventW, -1)
-    FF(SetEvent, -1)
-    FF(ResetEvent, -1)
-    FF(WaitForSingleObject, -1)
+    FF(GetVolumeInformationA,-1,uSppuuuupu)
+    FF(GetDriveTypeA,-1,uSp)
+    FF(GetLogicalDriveStringsA,-1, uSup)
+    FF(IsBadWritePtr, 357,uSpu)
+    FF(IsBadReadPtr, 354,uSpu)
+    FF(IsBadStringPtrW, -1,uSpu)
+    FF(IsBadStringPtrA, -1,uSpu)
+    FF(DisableThreadLibraryCalls, -1,uSi)
+    FF(CreateThread, -1,iSpuppuu)
+    FF(ResumeThread, -1,uSi)
+    FF(CreateEventA, -1,iSpuup)
+    FF(CreateEventW, -1,iSpuup)
+    FF(SetEvent, -1,uSi)
+    FF(ResetEvent, -1,uSi)
+    FF(WaitForSingleObject, -1,uSiu)
 #ifdef CONFIG_QTX_CODECS
-    FF(WaitForMultipleObjects, -1)
-    FF(ExitThread, -1)
+    FF(WaitForMultipleObjects, -1,uSuiuu)
+    FF(ExitThread, -1,vSu)
 #endif
-    FF(GetSystemInfo, -1)
-    FF(GetVersion, 332)
-    FF(HeapCreate, 461)
-    FF(HeapAlloc, -1)
-    FF(HeapDestroy, -1)
-    FF(HeapFree, -1)
-    FF(HeapSize, -1)
-    FF(HeapReAlloc,-1)
-	FF(HeapValidate, -1)
-    FF(GetProcessHeap, -1)
-    FF(VirtualAlloc, -1)
-    FF(VirtualFree, -1)
-    FF(InitializeCriticalSection, -1)
-    FF(InitializeCriticalSectionAndSpinCount, -1)
-    FF(EnterCriticalSection, -1)
-    FF(LeaveCriticalSection, -1)
-    FF(DeleteCriticalSection, -1)
-    FF(TlsAlloc, -1)
-    FF(TlsFree, -1)
-    FF(TlsGetValue, -1)
-    FF(TlsSetValue, -1)
-    FF(GetCurrentThreadId, -1)
-    FF(GetCurrentProcess, -1)
-    FF(LocalAlloc, -1)
-    FF(LocalReAlloc,-1)
-    FF(LocalLock, -1)
-    FF(GlobalAlloc, -1)
-    FF(GlobalReAlloc, -1)
-    FF(GlobalLock, -1)
-    FF(GlobalSize, -1)
-    FF(MultiByteToWideChar, 427)
-    FF(WideCharToMultiByte, -1)
-    FF(GetVersionExA, -1)
-    FF(GetVersionExW, -1)
-    FF(CreateSemaphoreA, -1)
-    FF(CreateSemaphoreW, -1)
-    FF(QueryPerformanceCounter, -1)
-    FF(QueryPerformanceFrequency, -1)
-    FF(LocalHandle, -1)
-    FF(LocalUnlock, -1)
-    FF(LocalFree, -1)
-    FF(GlobalHandle, -1)
-    FF(GlobalUnlock, -1)
-    FF(GlobalFree, -1)
-    FF(LoadResource, -1)
-    FF(ReleaseSemaphore, -1)
-    FF(CreateMutexA, -1)
-    FF(CreateMutexW, -1)
-    FF(ReleaseMutex, -1)
-    FF(SignalObjectAndWait, -1)
-    FF(FindResourceA, -1)
-    FF(LockResource, -1)
-    FF(FreeResource, -1)
-    FF(SizeofResource, -1)
-    FF(CloseHandle, -1)
-    FF(GetCommandLineA, -1)
-    FF(GetEnvironmentStringsW, -1)
-    FF(FreeEnvironmentStringsW, -1)
-    FF(FreeEnvironmentStringsA, -1)
-    FF(GetEnvironmentStrings, -1)
-    FF(GetStartupInfoA, -1)
-    FF(GetStdHandle, -1)
-    FF(GetFileType, -1)
+    FF(GetSystemInfo, -1,vSp)
+    FF(GetVersion, 332,iSv)
+    FF(HeapCreate, 461,iSuuu)
+    FF(HeapAlloc, -1,pSiuu)
+    FF(HeapDestroy, -1,uSi)
+    FF(HeapFree, -1,uSiup)
+    FF(HeapSize, -1,uSiup)
+    FF(HeapReAlloc,-1,pSiupu)
+    FF(HeapValidate, -1,uSiup)
+    FF(GetProcessHeap, -1,iSv)
+    FF(VirtualAlloc, -1,pSpuuu)
+    FF(VirtualFree, -1,uSpuu)
+    FF(InitializeCriticalSection, -1,vSp)
+    FF(InitializeCriticalSectionAndSpinCount, -1, vSpu)
+    FF(EnterCriticalSection, -1,vSp)
+    FF(LeaveCriticalSection, -1,vSp)
+    FF(DeleteCriticalSection, -1,vSp)
+    FF(TlsAlloc, -1,uSv)
+    FF(TlsFree, -1,uSu)
+    FF(TlsGetValue, -1,pSu)
+    FF(TlsSetValue, -1,uSup)
+    FF(GetCurrentThreadId, -1,uSv)
+    FF(GetCurrentProcess, -1,iSv)
+    FF(LocalAlloc, -1,iSuu)
+    FF(LocalReAlloc,-1,iSiuu)
+    FF(LocalLock, -1,pSi)
+    FF(GlobalAlloc, -1,iSuu)
+    FF(GlobalReAlloc, -1,iSiuu)
+    FF(GlobalLock, -1,pSi)
+    FF(GlobalSize, -1,uSi)
+    FF(MultiByteToWideChar, 427,iSuupipi)
+    FF(WideCharToMultiByte, -1,iSuupipipu)
+    FF(GetVersionExA, -1,uSp)
+    FF(GetVersionExW, -1,uSp)
+    FF(CreateSemaphoreA, -1,iSpiip)
+    FF(CreateSemaphoreW, -1,iSpiip)
+    FF(QueryPerformanceCounter, -1,uSp)
+    FF(QueryPerformanceFrequency, -1, uSp)
+    FF(LocalHandle, -1,iSp)
+    FF(LocalUnlock, -1,uSi)
+    FF(LocalFree, -1,iSi)
+    FF(GlobalHandle, -1,iSp)
+    FF(GlobalUnlock, -1,uSi)
+    FF(GlobalFree, -1,iSi)
+    FF(LoadResource, -1,iSii)
+    FF(ReleaseSemaphore, -1,uSiip)
+    FF(CreateMutexA, -1,iSpup)
+    FF(CreateMutexW, -1,iSpup)
+    FF(ReleaseMutex, -1,uSi)
+    FF(SignalObjectAndWait, -1, vFv)
+    FF(FindResourceA, -1,iSipp)
+    FF(LockResource, -1,pSi)
+    FF(FreeResource, -1, vFv)
+    FF(SizeofResource, -1,uSii)
+    FF(CloseHandle, -1,uSi)
+    FF(GetCommandLineA, -1,pSv)
+    FF(GetEnvironmentStringsW, -1,pSv)
+    FF(FreeEnvironmentStringsW, -1,uSp)
+    FF(FreeEnvironmentStringsA, -1,iSv)
+    FF(GetEnvironmentStrings, -1, pSp)
+    FF(GetStartupInfoA, -1,vSp)
+    FF(GetStdHandle, -1,iSu)
+    FF(GetFileType, -1,uSi)
 #ifdef CONFIG_QTX_CODECS
-    FF(GetFileAttributesA, -1)
+    FF(GetFileAttributesA, -1,uSp)
 #endif
-    FF(SetHandleCount, -1)
-    FF(GetACP, -1)
-    FF(GetModuleFileNameA, -1)
-    FF(SetUnhandledExceptionFilter, -1)
-    FF(LoadLibraryA, -1)
-    FF(GetProcAddress, -1)
-    FF(FreeLibrary, -1)
-    FF(CreateFileMappingA, -1)
-    FF(OpenFileMappingA, -1)
-    FF(MapViewOfFile, -1)
-    FF(UnmapViewOfFile, -1)
-    FF(Sleep, -1)
-    FF(GetModuleHandleA, -1)
-    FF(GetModuleHandleW, -1)
-    FF(GetProfileIntA, -1)
-    FF(GetPrivateProfileIntA, -1)
-    FF(GetPrivateProfileStringA, -1)
-    FF(WritePrivateProfileStringA, -1)
-    FF(GetLastError, -1)
-    FF(SetLastError, -1)
-    FF(InterlockedIncrement, -1)
-    FF(InterlockedDecrement, -1)
-    FF(GetTimeZoneInformation, -1)
-    FF(OutputDebugStringA, -1)
-    FF(GetLocalTime, -1)
-    FF(GetSystemTime, -1)
-    FF(GetSystemTimeAsFileTime, -1)
-    FF(GetEnvironmentVariableA, -1)
-    FF(SetEnvironmentVariableA, -1)
-    FF(RtlZeroMemory,-1)
-    FF(RtlMoveMemory,-1)
-    FF(RtlFillMemory,-1)
-    FF(GetTempPathA,-1)
-    FF(FindFirstFileA,-1)
-    FF(FindNextFileA,-1)
-    FF(FindClose,-1)
-    FF(FileTimeToLocalFileTime,-1)
-    FF(DeleteFileA,-1)
-    FF(ReadFile,-1)
-    FF(WriteFile,-1)
-    FF(SetFilePointer,-1)
-    FF(GetTempFileNameA,-1)
-    FF(CreateFileA,-1)
-    FF(GetSystemDirectoryA,-1)
-    FF(GetWindowsDirectoryA,-1)
-    FF(GetCurrentDirectoryA,-1)
-    FF(SetCurrentDirectoryA,-1)
-    FF(CreateDirectoryA,-1)
-    FF(GetShortPathNameA,-1)
-    FF(GetFullPathNameA,-1)
-    FF(SetErrorMode, -1)
-    FF(IsProcessorFeaturePresent, -1)
-    FF(IsDebuggerPresent, -1)
-    FF(GetProcessAffinityMask, -1)
-    FF(InterlockedExchange, -1)
-    FF(InterlockedCompareExchange, -1)
-    FF(MulDiv, -1)
-    FF(lstrcmpiA, -1)
-    FF(lstrlenA, -1)
-    FF(lstrlenW, -1)
-    FF(lstrcpyA, -1)
-    FF(lstrcatA, -1)
-    FF(lstrcpynA,-1)
-    FF(GetProcessVersion,-1)
-    FF(GetCurrentThread,-1)
-    FF(GetOEMCP,-1)
-    FF(GetCPInfo,-1)
-    FF(DuplicateHandle,-1)
-    FF(GetTickCount, -1)
-    FF(SetThreadAffinityMask,-1)
-    FF(GetCurrentProcessId,-1)
-    FF(GlobalMemoryStatus,-1)
-    FF(GetThreadPriority,-1)
-    FF(SetThreadPriority,-1)
-    FF(TerminateProcess,-1)
-    FF(ExitProcess,-1)
-    {"LoadLibraryExA", -1, (void*)&LoadLibraryExA},
-    FF(SetThreadIdealProcessor,-1)
-    FF(SetProcessAffinityMask, -1)
-    FF(EncodePointer, -1)
-    FF(DecodePointer, -1)
-    FF(GetThreadLocale, -1)
-    FF(GetLocaleInfoA, -1)
+    FF(SetHandleCount, -1,uSu)
+    FF(GetACP, -1,uSv)
+    FF(GetModuleFileNameA, -1,uSipu)
+    FF(SetUnhandledExceptionFilter, -1, pSp)
+    FF(LoadLibraryA, -1,iSp)
+    FF(GetProcAddress, -1,pSip)
+    FF(FreeLibrary, -1,uSi)
+    FF(CreateFileMappingA, -1,iSipuuup)
+    FF(OpenFileMappingA, -1,iSuup)
+    FF(MapViewOfFile, -1,pSiuuuu)
+    FF(UnmapViewOfFile, -1,uSp)
+    FF(Sleep, -1,vSu)
+    FF(GetModuleHandleA, -1,iSp)
+    FF(GetModuleHandleW, -1,iSp)
+    FF(GetProfileIntA, -1,uSppi)
+    FF(GetPrivateProfileIntA, -1,uSppip)
+    FF(GetPrivateProfileStringA, -1,iSppppup)
+    FF(WritePrivateProfileStringA, -1,uSpppp)
+    FF(GetLastError, -1,uSv)
+    FF(SetLastError, -1,vSu)
+    FF(InterlockedIncrement, -1,iSp)
+    FF(InterlockedDecrement, -1,iSp)
+    FF(GetTimeZoneInformation, -1, pSp)
+    FF(OutputDebugStringA, -1,vSp)
+    FF(GetLocalTime, -1,vSp)
+    FF(GetSystemTime, -1,vSp)
+    FF(GetSystemTimeAsFileTime, -1,vSp)
+    FF(GetEnvironmentVariableA, -1,uSppu)
+    FF(SetEnvironmentVariableA, -1,uSpp)
+    FF(RtlZeroMemory,-1, pSp)
+    FF(RtlMoveMemory,-1, pSp)
+    FF(RtlFillMemory,-1, pSp)
+    FF(GetTempPathA,-1,uSup)
+    FF(FindFirstFileA,-1,iSpp)
+    FF(FindNextFileA,-1,uSip)
+    FF(FindClose,-1,uSi)
+    FF(FileTimeToLocalFileTime,-1,uSpp)
+    FF(DeleteFileA,-1,uSp)
+    FF(ReadFile,-1,uSipuup)
+    FF(WriteFile,-1,uSipuup)
+    FF(SetFilePointer,-1,uSiipu)
+    FF(GetTempFileNameA,-1,uSppup)
+    FF(CreateFileA,-1,iSpuupuui)
+    FF(GetSystemDirectoryA,-1,uSpu)
+    FF(GetWindowsDirectoryA,-1,uSpu)
+    FF(GetCurrentDirectoryA,-1,uSup)
+    FF(SetCurrentDirectoryA,-1,uSp)
+    FF(CreateDirectoryA,-1,uSpp)
+    FF(GetShortPathNameA,-1,uSppu)
+    FF(GetFullPathNameA,-1,uSpupp)
+    FF(SetErrorMode, -1,uSu)
+    FF(IsProcessorFeaturePresent, -1,uSu)
+    FF(IsDebuggerPresent, -1,uSv)
+    FF(GetProcessAffinityMask, -1, vFv)
+    FF(InterlockedExchange, -1,iSpi)
+    FF(InterlockedCompareExchange, -1,pSppp)
+    FF(MulDiv, -1, pSp)
+    FF(lstrcmpiA, -1,iSpp)
+    FF(lstrlenA, -1,iSp)
+    FF(lstrlenW, -1,iSp)
+    FF(lstrcpyA, -1,pSpp)
+    FF(lstrcatA, -1,pSpp)
+    FF(lstrcpynA,-1,pSppi)
+    FF(GetProcessVersion,-1,uSu)
+    FF(GetCurrentThread,-1,iSv)
+    FF(GetOEMCP,-1,uSv)
+    FF(GetCPInfo,-1, pSp)
+    FF(DuplicateHandle,-1,uSiiiiuuu)
+    FF(GetTickCount, -1, pSv)
+    FF(SetThreadAffinityMask,-1,uSiu)
+    FF(GetCurrentProcessId,-1,pSv)
+    FF(GlobalMemoryStatus,-1,vSp)
+    FF(GetThreadPriority,-1,iSi)
+    FF(SetThreadPriority,-1,uSii)
+    FF(TerminateProcess,-1,uSiu)
+    FF(ExitProcess,-1,vSu)
+    WRFF(LoadLibraryExA,uSpuu)
+    FF(SetThreadIdealProcessor,-1, pSp)
+    FF(SetProcessAffinityMask, -1, pSp)
+    FF(EncodePointer, -1, pSp)
+    FF(DecodePointer, -1, pSp)
+    FF(GetThreadLocale, -1,uSv)
+    FF(GetLocaleInfoA, -1,iSuupi)
     UNDEFF(FlsAlloc, -1)
     UNDEFF(FlsGetValue, -1)
     UNDEFF(FlsSetValue, -1)
@@ -5544,256 +5621,256 @@ static const struct exports exp_kernel32[]=
 };
 
 static const struct exports exp_msvcrt[]={
-    FF(malloc, -1)
-    FF(_initterm, -1)
-    FF(__dllonexit, -1)
-    FF(_snprintf,-1)
-    FF(free, -1)
-    {"??3@YAXPAX@Z", -1, expdelete},
-    {"??2@YAPAXI@Z", -1, expnew},
-    {"_adjust_fdiv", -1, (void*)&_adjust_fdiv},
-    {"_winver",-1,(void*)&_winver},
-    {"_write",-1,(void*)&write},
-    {"_open",-1,(void*)&open},
-    {"_close",-1,(void*)&close},
-    {"_getcwd",-1,(void*)&getcwd},
-    {"_wgetcwd",-1,(void*)&getcwd},
-    {"_stat",-1,(void*)&stat},
-    {"_unlink",-1,(void*)&unlink},
-    FF(_errno, -1)
-    FF(strrchr, -1)
-    FF(strchr, -1)
-    FF(strlen, -1)
-    FF(strcpy, -1)
-    FF(strncpy, -1)
+    FF(malloc, -1,pFi)
+    FF(_initterm, -1,iFpp)
+    FF(__dllonexit, -1,pFv)
+    FF(_snprintf,-1,iFv)
+    FF(free, -1,vFp)
+    {"??3@YAXPAX@Z", -1, expdelete, vFp},
+    {"??2@YAPAXI@Z", -1, expnew, pFu},
+    {"_adjust_fdiv", -1, &_adjust_fdiv, 0},
+    {"_winver", -1, &_winver, 0},
+    {"_write",-1,(void*)&write, iFipu},
+    {"_open",-1,(void*)&open, iFpu},
+    {"_close",-1,(void*)&close, iFi},
+    {"_getcwd",-1,(void*)&getcwd, pFv},
+    {"_wgetcwd",-1,(void*)&getcwd, pFv},
+    {"_stat",-1,(void*)&stat, iFpp},
+    {"_unlink",-1,(void*)&unlink, iFp},
+    FF(_errno, -1,iFv)
+    FF(strrchr, -1,pFpv)
+    FF(strchr, -1,pFpv)
+    FF(strlen, -1,iFp)
+    FF(strcpy, -1,pFpv)
+    FF(strncpy, -1,pFpv)
     //FF(strncat, -1)
-    FF(wcscpy, -1)
-    FF(strcmp, -1)
-    FF(strncmp, -1)
-    FF(strcat, -1)
+    FF(wcscpy, -1,pFpv)
+    FF(strcmp, -1,iFpv)
+    FF(strncmp, -1,iFpvi)
+    FF(strcat, -1,pFpv)
     //FF(strtol, -1)
     //FF(strspn, -1)
     //FF(strpbrk, -1)
     //FF(strerror, -1)
-    WRFF(strncat)
-    WRFF(strtol)
-    WRFF(strspn)
-    WRFF(strpbrk)
-    WRFF(strerror)
-    WRFF(exit)
-    WRFF(ctime)
-    WRFF(abort)
+    WRFF(strncat, uFpp)
+    WRFF(strtol, uFp)
+    WRFF(strspn, pFpp)
+    WRFF(strpbrk, pFpp)
+    WRFF(strerror, pFu)
+    WRFF(exit, vFi)
+    WRFF(ctime, uFu)
+    WRFF(abort, vFp)
     
-    FF(_stricmp,-1)
-    FF(_strnicmp,-1)
-    FF(_strdup,-1)
-    FF(_setjmp3,-1)
-    FF(isalnum, -1)
-    FF(isspace, -1)
-    FF(isalpha, -1)
-    FF(isdigit, -1)
-    WRFF(isupper)
-    FF(memmove, -1)
-    FF(memcmp, -1)
-    FF(memset, -1)
-    FF(memcpy, -1)
-    FF(time, -1)
-    FF(rand, -1)
-    FF(srand, -1)
-    FF(log10, -1)
-    FF(pow, -1)
-    FF(cos, -1)
-    FF(fabs, -1)
-    FF(sqrt, -1)
-    FF(sin, -1)
-    FF(atan2, -1)
-    FF(acos, -1)
-    FF(toupper, -1)
-    FF(tolower, -1)
-    FF(atoi, -1)
-    FF(atof, -1)
-    FF(tan, -1)
-    FF(exp, -1)
-    FF(atan, -1)
-    FF(fmod, -1)
-    FF(_ftol,-1)
-    FF(_CIpow,-1)
-    FF(_CIcos,-1)
-    FF(_CIsin,-1)
-    FF(_CIsqrt,-1)
-    FF(_CImod,-1)
-    FF(_CIfmod,-1)
-    FF(ldexp,-1)
-    FF(frexp,-1)
-    FF(sprintf,-1)
-    FF(sscanf,-1)
-    FF(fopen,-1)
-    FF(fclose,-1)
-    FF(fwrite,-1)
-    WRFF(fgets)
+    FF(_stricmp,-1,iFpv)
+    FF(_strnicmp,-1,iFpv)
+    FF(_strdup,-1,pFp)
+    FF(_setjmp3,-1,iFpv)
+    FF(isalnum, -1,iFi)
+    FF(isspace, -1,iFi)
+    FF(isalpha, -1,iFi)
+    FF(isdigit, -1,iFi)
+    WRFF(isupper, iFc)
+    FF(memmove, -1,pFpv)
+    FF(memcmp, -1,iFpv)
+    FF(memset, -1,pFpv)
+    FF(memcpy, -1,pFpv)
+    FF(time, -1,uFp)
+    FF(rand, -1,iFv)
+    FF(srand, -1,vFi)
+    FF(log10, -1,vFv)
+    FF(pow, -1,dFdv)
+    FF(cos, -1,vFv)
+    FF(fabs, -1,dFd)
+    FF(sqrt, -1,dFd)
+    FF(sin, -1,dFd)
+    FF(atan2, -1,dFdv)
+    FF(acos, -1,dFd)
+    FF(toupper, -1,cFc)
+    FF(tolower, -1,cFc)
+    FF(atoi, -1,iFc)
+    FF(atof, -1,dFc)
+    FF(tan, -1,dFd)
+    FF(exp, -1, dFd)
+    FF(atan, -1,dFd)
+    FF(fmod, -1,dFdv)
+    FF(_ftol,-1,IFv)
+    FF(_CIpow,-1,dFv)
+    FF(_CIcos,-1,dFv)
+    FF(_CIsin,-1,dFv)
+    FF(_CIsqrt,-1,dFv)
+    FF(_CImod,-1,dFv)
+    FF(_CIfmod,-1,dFv)
+    FF(ldexp,-1, dFdi)
+    FF(frexp,-1, dFdp)
+    FF(sprintf,-1,iFppp)
+    FF(sscanf,-1,iFpv)
+    FF(fopen,-1,pFpv)
+    FF(fclose,-1,iFv)
+    FF(fwrite,-1,iFv)
+    WRFF(fgets, pFp)
     //FF(feof,-1)
-    WRFF(feof)
-    FF(_mkdir,-1)
-    FF(fprintf,-1)
-    FF(printf,-1)
-    FF(getenv,-1)
-    FF(floor,-1)
+    WRFF(feof, iFp)
+    FF(_mkdir,-1,iFc)
+    FF(fprintf,-1,iFp)
+    FF(printf,-1,iFp)
+    FF(getenv,-1,pFp)
+    FF(floor,-1,dFd)
 /* needed by frapsvid.dll */
-    {"strstr",-1,(char *)&strstr},
-    {"qsort",-1,(void *)&qsort},
-    FF(_EH_prolog,-1)
-    FF(calloc,-1)
-    {"ceil",-1,(void*)&ceil},
+    WRFF(strstr, pFpp)
+    WRFF(qsort, iFpppp)
+    FF(_EH_prolog,-1,vFv)
+    FF(calloc,-1,pFuu)
+    WRFF(ceil, iFd)
 /* needed by imagepower mjpeg2k */
-    {"clock",-1,(void*)&clock},
-    {"memchr",-1,(void*)&memchr},
-    {"vfprintf",-1,(void*)&vfprintf},
-    {"_vsnprintf",-1,(void*)&vsnprintf},
-    {"_vsprintf",-1,(void*)&vsprintf},
-    {"vsprintf",-1,(void*)&vsprintf},
-    {"strtok",-1,(void*)&strtok},
+    WRFF(clock, uFu)
+    WRFF(memchr, iFpuu)
+    WRFF(vfprintf, iFppp)
+    {"_vsnprintf",-1,(void*)&vsnprintf, iFupp},
+    {"_vsprintf",-1,(void*)&vsprintf, iFpp},
+    WRFF(vsprintf, iFpp)
+    WRFF(strtok, pFpp)
 //    {"realloc",-1,(void*)&realloc},
-    FF(realloc,-1)
-    {"puts",-1,(void*)&puts}
+    FF(realloc,-1,vFv)
+    WRFF(puts, vFp)
 };
 static const struct exports exp_winmm[]={
-    FF(GetDriverModuleHandle, -1)
-    FF(timeGetTime, -1)
-    FF(DefDriverProc, -1)
-    FF(OpenDriverA, -1)
-    FF(OpenDriver, -1)
-    FF(timeGetDevCaps, -1)
-    FF(timeBeginPeriod, -1)
-    FF(joyGetNumDevs, -1)
+    FF(GetDriverModuleHandle, -1,iSi)
+    FF(timeGetTime, -1, vFv)
+    FF(DefDriverProc, -1, vFv)
+    FF(OpenDriverA, -1,iSppp)
+    FF(OpenDriver, -1, vFv)
+    FF(timeGetDevCaps, -1, vFv)
+    FF(timeBeginPeriod, -1, vFv)
+    FF(joyGetNumDevs, -1, vFv)
 #ifdef CONFIG_QTX_CODECS
-    FF(timeEndPeriod, -1)
-    FF(waveOutGetNumDevs, -1)
+    FF(timeEndPeriod, -1, vFv)
+    FF(waveOutGetNumDevs, -1, vFv)
 #endif
 };
 static const struct exports exp_psapi[]={
-    FF(GetModuleBaseNameA, -1)
+    FF(GetModuleBaseNameA, -1, vFv)
 };
 static const struct exports exp_user32[]={
-    FF(LoadIconA,-1)
-    FF(LoadStringA, -1)
-    FF(wsprintfA, -1)
-    FF(GetDC, -1)
-    FF(GetDesktopWindow, -1)
-    FF(ReleaseDC, -1)
-    FF(IsRectEmpty, -1)
-    FF(LoadCursorA,-1)
-    FF(SetCursor,-1)
-    FF(GetCursorPos,-1)
-    FF(SetCursorPos,-1)
-    FF(ShowCursor,-1)
-    FF(RegisterWindowMessageA,-1)
-    FF(GetSystemMetrics,-1)
-    FF(GetSysColor,-1)
-    FF(GetSysColorBrush,-1)
-    FF(GetWindowDC, -1)
-    FF(DrawTextA, -1)
-    FF(MessageBoxA, -1)
-    FF(RegisterClassA, -1)
-    FF(UnregisterClassA, -1)
-    FF(GetWindowRect, -1)
-    FF(MonitorFromWindow, -1)
-    FF(MonitorFromRect, -1)
-    FF(MonitorFromPoint, -1)
-    FF(EnumDisplayMonitors, -1)
-    FF(GetMonitorInfoA, -1)
-    FF(EnumDisplayDevicesA, -1)
-//    FF(GetClientRect, -1)
-//    FF(ClientToScreen, -1)
-    FF(IsWindowVisible, -1)
-    FF(GetActiveWindow, -1)
-    FF(GetClassNameA, -1)
-    FF(GetClassInfoA, -1)
-    FF(GetWindowLongA, -1)
-    FF(EnumWindows, -1)
-    FF(GetWindowThreadProcessId, -1)
-    FF(CreateWindowExA, -1)
-    FF(MessageBeep, -1)
-    FF(DialogBoxParamA, -1)
-    FF(RegisterClipboardFormatA, -1)
-    FF(CharNextA, -1)
-    FF(EnumDisplaySettingsA, -1)
-    FF(SystemParametersInfoA, -1)
-    FF(PeekMessageA, -1)
+    FF(LoadIconA,-1, vFv)
+    FF(LoadStringA, -1, vFv)
+    FF(wsprintfA, -1,iFp)
+    FF(GetDC, -1, vFv)
+    FF(GetDesktopWindow, -1, vFv)
+    FF(ReleaseDC, -1, vFv)
+    FF(IsRectEmpty, -1, vFv)
+    FF(LoadCursorA,-1, vFv)
+    FF(SetCursor,-1, vFv)
+    FF(GetCursorPos,-1, vFv)
+    FF(SetCursorPos,-1, vFv)
+    FF(ShowCursor,-1, vFv)
+    FF(RegisterWindowMessageA,-1, vFv)
+    FF(GetSystemMetrics,-1, vFv)
+    FF(GetSysColor,-1, vFv)
+    FF(GetSysColorBrush,-1, vFv)
+    FF(GetWindowDC, -1, vFv)
+    FF(DrawTextA, -1, vFv)
+    FF(MessageBoxA, -1, uSpppp)
+    FF(RegisterClassA, -1, vFv)
+    FF(UnregisterClassA, -1, vFv)
+    FF(GetWindowRect, -1, vFv)
+    FF(MonitorFromWindow, -1, vFv)
+    FF(MonitorFromRect, -1, vFv)
+    FF(MonitorFromPoint, -1, vFv)
+    FF(EnumDisplayMonitors, -1, vFv)
+    FF(GetMonitorInfoA, -1, vFv)
+    FF(EnumDisplayDevicesA, -1, vFv)
+//    FF(GetClientRect, -1, vFv)
+//    FF(ClientToScreen, -vFv)
+    FF(IsWindowVisible, -1, vFv)
+    FF(GetActiveWindow, -1, vFv)
+    FF(GetClassNameA, -1, vFv)
+    FF(GetClassInfoA, -1, vFv)
+    FF(GetWindowLongA, -1, vFv)
+    FF(EnumWindows, -1, vFv)
+    FF(GetWindowThreadProcessId, -1, vFv)
+    FF(CreateWindowExA, -1, vFv)
+    FF(MessageBeep, -1, vFv)
+    FF(DialogBoxParamA, -1, vFv)
+    FF(RegisterClipboardFormatA, -1, vFv)
+    FF(CharNextA, -1, vFv)
+    FF(EnumDisplaySettingsA, -1, vFv)
+    FF(SystemParametersInfoA, -1, vFv)
+    FF(PeekMessageA, -1, vFv)
 };
 static const struct exports exp_advapi32[]={
-    FF(RegCloseKey, -1)
-    FF(RegCreateKeyA, -1)
-    FF(RegCreateKeyExA, -1)
-    FF(RegEnumKeyExA, -1)
-    FF(RegEnumValueA, -1)
-    FF(RegOpenKeyA, -1)
-    FF(RegOpenKeyExA, -1)
-    FF(RegQueryValueExA, -1)
-    FF(RegSetValueExA, -1)
-    FF(RegQueryInfoKeyA, -1)
+    FF(RegCloseKey, -1, vFv)
+    FF(RegCreateKeyA, -1, vFv)
+    FF(RegCreateKeyExA, -1, vFv)
+    FF(RegEnumKeyExA, -1, vFv)
+    FF(RegEnumValueA, -1, vFv)
+    FF(RegOpenKeyA, -1, vFv)
+    FF(RegOpenKeyExA, -1, vFv)
+    FF(RegQueryValueExA, -1, vFv)
+    FF(RegSetValueExA, -1, vFv)
+    FF(RegQueryInfoKeyA, -1, vFv)
 };
 static const struct exports exp_gdi32[]={
-    FF(CreateCompatibleDC, -1)
-    FF(CreateFontA, -1)
-    FF(DeleteDC, -1)
-    FF(DeleteObject, -1)
-    FF(GetDeviceCaps, -1)
-    FF(GetSystemPaletteEntries, -1)
-    FF(CreatePalette, -1)
-    FF(GetObjectA, -1)
-    FF(GetCharABCWidthsA, -1)
-    FF(SetTextAlign, -1)
-    FF(GetTextMetricsA, -1)
-    FF(CreateDIBSection, -1)
-    FF(SelectObject, -1)
-    FF(CreateRectRgn, -1)
+    FF(CreateCompatibleDC, -1, vFv)
+    FF(CreateFontA, -1, vFv)
+    FF(DeleteDC, -1, vFv)
+    FF(DeleteObject, -1, vFv)
+    FF(GetDeviceCaps, -1, vFv)
+    FF(GetSystemPaletteEntries, -1, vFv)
+    FF(CreatePalette, -1, iFv)
+    FF(GetObjectA, -1, vFv)
+    FF(GetCharABCWidthsA, -1, vFv)
+    FF(SetTextAlign, -1, vFv)
+    FF(GetTextMetricsA, -1, vFv)
+    FF(CreateDIBSection, -1, vFv)
+    FF(SelectObject, -1, vFv)
+    FF(CreateRectRgn, -1, vFv)
 };
 static const struct exports exp_version[]={
-    FF(GetFileVersionInfoSizeA, -1)
+    FF(GetFileVersionInfoSizeA, -1, pSp)
 };
 static const struct exports exp_ole32[]={
-    FF(CoCreateFreeThreadedMarshaler,-1)
-    FF(CoCreateInstance, -1)
-    FF(CoInitialize, -1)
-    FF(CoInitializeEx, -1)
-    FF(CoUninitialize, -1)
-    FF(CoTaskMemAlloc, -1)
-    FF(CoTaskMemFree, -1)
-    FF(StringFromGUID2, -1)
-    FF(PropVariantClear, -1)
+    FF(CoCreateFreeThreadedMarshaler,-1, vFv)
+    FF(CoCreateInstance, -1, vFv)
+    FF(CoInitialize, -1, vFv)
+    FF(CoInitializeEx, -1, vFv)
+    FF(CoUninitialize, -1,vFv)
+    FF(CoTaskMemAlloc, -1, vFv)
+    FF(CoTaskMemFree, -1, vFv)
+    FF(StringFromGUID2, -1, vFv)
+    FF(PropVariantClear, -1, vFv)
 };
 // do we really need crtdll ???
 // msvcrt is the correct place probably...
 static const struct exports exp_crtdll[]={
-    FF(memcpy, -1)
-    FF(wcscpy, -1)
+    FF(memcpy, -1,pFpv)
+    FF(wcscpy, -1,pFpv)
 };
 static const struct exports exp_comctl32[]={
-    FF(StringFromGUID2, -1)
-    FF(InitCommonControls, 17)
+    FF(StringFromGUID2, -1, vFv)
+    FF(InitCommonControls, 17, vFv)
 #ifdef CONFIG_QTX_CODECS
-    FF(CreateUpDownControl, 16)
+    FF(CreateUpDownControl, 16, vFv)
 #endif
 };
 static const struct exports exp_wsock32[]={
-    FF(htonl,8)
-    FF(ntohl,14)
+    FF(htonl,8, uFu)
+    FF(ntohl,14, uFu)
 };
 static const struct exports exp_msdmo[]={
-    FF(memcpy, -1) // just test
-    FF(MoCopyMediaType, -1)
-    FF(MoCreateMediaType, -1)
-    FF(MoDeleteMediaType, -1)
-    FF(MoDuplicateMediaType, -1)
-    FF(MoFreeMediaType, -1)
-    FF(MoInitMediaType, -1)
+    FF(memcpy, -1,pFpv) // just test
+    FF(MoCopyMediaType, -1, vFv)
+    FF(MoCreateMediaType, -1, vFv)
+    FF(MoDeleteMediaType, -1, vFv)
+    FF(MoDuplicateMediaType, -1, vFv)
+    FF(MoFreeMediaType, -1, vFv)
+    FF(MoInitMediaType, -1, vFv)
 };
 static const struct exports exp_oleaut32[]={
-    FF(SysAllocStringLen, 4)
-    FF(SysFreeString, 6)
-    FF(VariantInit, 8)
+    FF(SysAllocStringLen, -1, vFv)
+    FF(SysFreeString, 6, vFv)
+    FF(VariantInit, 8, vFv)
 #ifdef CONFIG_QTX_CODECS
-    FF(SysStringByteLen, 149)
+    FF(SysStringByteLen, 149,iFv)
 #endif
 };
 
@@ -5814,90 +5891,90 @@ static const struct exports exp_oleaut32[]={
 */
 #ifdef REALPLAYER
 static const struct exports exp_pncrt[]={
-    FF(malloc, -1) // just test
-    FF(free, -1) // just test
-    FF(fprintf, -1) // just test
-    {"_adjust_fdiv", -1, (void*)&_adjust_fdiv},
-    FF(_ftol,-1)
-    FF(_initterm, -1)
-    {"??3@YAXPAX@Z", -1, expdelete},
-    {"??2@YAPAXI@Z", -1, expnew},
-    FF(__dllonexit, -1)
-    FF(strncpy, -1)
-    FF(_CIpow,-1)
-    FF(calloc,-1)
-    FF(memmove, -1)
-    FF(ldexp, -1)
-    FF(frexp, -1)
+    FF(malloc, -1,pFi) // just test
+    FF(free, -1,vFp) // just test
+    FF(fprintf, -1,iFpv) // just test
+    {"_adjust_fdiv", -1, &_adjust_fdiv, 0},
+    FF(_ftol,-1,IFv)
+    FF(_initterm, -1,iFpp)
+    {"??3@YAXPAX@Z", -1, expdelete, vFp},
+    {"??2@YAPAXI@Z", -1, expnew, pFu},
+    FF(__dllonexit, -1,pFv)
+    FF(strncpy, -1,pFpv)
+    FF(_CIpow,-1,dFv)
+    FF(calloc,-1,pFuu)
+    FF(memmove, -1,pFpv)
+    FF(ldexp, -1, dFdi)
+    FF(frexp, -1, dFdp)
 };
 #endif
 
 #ifdef CONFIG_QTX_CODECS
 static const struct exports exp_ddraw[]={
-    FF(DirectDrawCreate, -1)
+    FF(DirectDrawCreate, -1,iFv)
 };
 #endif
 
 static const struct exports exp_comdlg32[]={
-    FF(GetOpenFileNameA, -1)
+    FF(GetOpenFileNameA, -1, uSp)
 };
 
 static const struct exports exp_shlwapi[]={
-    FF(PathFindExtensionA, -1)
-    FF(PathFindFileNameA, -1)
+    FF(PathFindExtensionA, -1, pSp)
+    FF(PathFindFileNameA, -1, pSp)
 };
 
 static const struct exports exp_msvcr80[]={
-    FF(_CIpow,-1)
-    FF(_CIsin,-1)
-    FF(_CIcos,-1)
-    FF(_CIsqrt,-1)
-    FF(memcpy,-1)
-    FF(memset,-1)
-    FF(sprintf,-1)
-    FF(strncpy,-1)
-    FF(fopen,-1)
-    FF(malloc,-1)
-    FF(free,-1)
-    FF(_initterm_e, -1)
-    FF(_initterm, -1)
-    FF(_decode_pointer, -1)
+    FF(_CIpow,-1,dFv)
+    FF(_CIsin,-1,dFv)
+    FF(_CIcos,-1,dFv)
+    FF(_CIsqrt,-1,dFv)
+    FF(memcpy,-1,pFpv)
+    FF(memset,-1,pFpv)
+    FF(sprintf,-1,iFpv)
+    FF(strncpy,-1,pFpv)
+    FF(fopen,-1,pFpv)
+    FF(malloc,-1,pFi)
+    FF(free,-1,vFp)
+    FF(_initterm_e, -1,iFpp)
+    FF(_initterm, -1,iFpp)
+    FF(_decode_pointer, -1,iFv)
 
 // For CFDecode2.ax
-    {"_aligned_free",-1,(void*)expfree},
-    {"_aligned_malloc",-1,(void*)expmalloc},
-    FF(_splitpath,-1)
-    FF(_mbsupr,-1)
-    {"_mbscmp", -1, (void*)strcmp},
-    {"clock",-1,(void*)&clock},
-    FF(_time64,-1)
+    {"_aligned_free",-1,(void*)expfree, pFu},
+    {"_aligned_malloc",-1,(void*)expmalloc, pFu},
+    FF(_splitpath,-1,vFc)
+    FF(_mbsupr,-1,cFc)
+    {"_mbscmp", -1, (void*)strcmp, iFpp},
+    WRFF(clock, iFv)
+    FF(_time64,-1,IFv)
 /* needed by KGV1-VFW.dll */
-    {"??2@YAPAXI@Z", -1, expnew},
-    {"??3@YAXPAX@Z", -1, expdelete}
+    {"??2@YAPAXI@Z", -1, expnew, pFu},
+    {"??3@YAXPAX@Z", -1, expdelete, vFp}
 };
 
 static const struct exports exp_msvcp60[]={
-    {"??0_Lockit@std@@QAE@XZ", -1, exp_0Lockit_dummy},
-    {"??1_Lockit@std@@QAE@XZ", -1, exp_1Lockit_dummy}
+    {"??0_Lockit@std@@QAE@XZ", -1, exp_0Lockit_dummy, vFv},
+    {"??1_Lockit@std@@QAE@XZ", -1, exp_1Lockit_dummy, vFv}
 };
 
 static const struct exports exp_msvcr100[]={
-    FF(memcpy, -1)
-    FF(memset, -1)
-    FF(_initterm_e, -1)
-    FF(_initterm, -1)
-    {"??2@YAPAXI@Z", -1, expnew},
-    {"??3@YAXPAX@Z", -1, expdelete}
+    FF(memcpy, -1,pFpv)
+    FF(memset, -1,pFpv)
+    FF(_initterm_e, -1,iFpp)
+    FF(_initterm, -1,iFpp)
+    {"??2@YAPAXI@Z", -1, expnew, pFu},
+    {"??3@YAXPAX@Z", -1, expdelete, vFp}
 };
 
 static const struct exports exp_sdl2[]={
-    FF(SDL_GetRelativeMouseState, -1)
-    FF(SDL_NumJoysticks, -1)
-    FF(SDL_GameControllerGetAxis, -1)
+    FF(SDL_GetRelativeMouseState, -1,vFpp)
+    FF(SDL_NumJoysticks, -1,iFv)
+    FF(SDL_GameControllerGetAxis, -1,wFpi)
 };
 
 static const struct exports exp_opengl32[]={
-    FF(wglGetProcAddress, -1)
+    FF(wglGetProcAddress, -1, pSp)
 };
 
 
@@ -6402,6 +6479,20 @@ static const struct glfuncs glfunctions[]={
     
 };
 
+static void  __alignp stubprint_fallback()
+{
+  printf("Called stub function!\n");
+#ifdef __GLIBC__
+  void *trace[32];
+  backtrace_symbols_fd(trace, backtrace(trace, 32), 1);
+  char *func =  MODULE_FindNearFunctionName(trace[1]);
+  if( func )
+    printf("%s\n", func);
+#endif
+}
+
+#ifdef __i386__
+
 #define MAX_NUM_STUBS 1024
 static struct stubprint_s
 {
@@ -6432,18 +6523,7 @@ static int stubprint_thunk[] = {0xbeefb855, 0xe589dead, 0x6814ec83, 0xcafebaad, 
 #define STUB_ARG_OFFSET 12
 #define MAX_STUB_SIZE 24
 
-static void  __alignp stubprint_fallback()
-{
-  printf("Called stub function!\n");
-#ifdef __GLIBC__
-  void *trace[32];
-  backtrace_symbols_fd(trace, backtrace(trace, 32), 1);
-  char *func =  MODULE_FindNearFunctionName(trace[1]);
-  if( func )
-	printf("%s\n", func);
-#endif
-}
-
+static void  __alignp stubprint_fallback();
 
 static void* add_stub(const char *library, const char *name, int ordinal)
 {
@@ -6476,7 +6556,26 @@ static void* add_stub(const char *library, const char *name, int ordinal)
 	return (void*)stubprint_fallback;
 #endif
 }
+#endif
+#if X86EMU
+#include "bridge.h"
+bridge_t *dllbridge;
+void *br_fallback;
 
+int wrlen(const char*w)
+{
+    if( !w || *(w+1) != 'S' )
+        return 0;
+    int l = 0;
+    w+=2;
+    while(*w && *w != 'v')
+    {
+        l+=4;
+        w++;
+    }
+    return l;
+}
+#endif
 void* LookupExternal(const char* library, int ordinal)
 {
     int i,j;
@@ -6498,7 +6597,13 @@ void* LookupExternal(const char* library, int ordinal)
 	    if(ordinal!=libraries[i].exps[j].id)
 		continue;
 	    dbgprintf("Hit: 0x%p\n", libraries[i].exps[j].func);
-	    return libraries[i].exps[j].func;
+#if X86EMU
+        void *w = libraries[i].exps[j].wrapper;
+        if( !w ) w = vFv;
+        return AddCheckBridge(dllbridge,w, libraries[i].exps[j].func, wrlen(libraries[i].exps[j].wrapper_name));
+#else
+        return libraries[i].exps[j].func;
+#endif
 	}
     }
 
@@ -6536,11 +6641,22 @@ void* LookupExternal(const char* library, int ordinal)
 
 no_dll:
 	printf("Could not find %s:%d\n", library, ordinal);
-	return add_stub(library, NULL, ordinal);
+#if X86EMU
+    return br_fallback; /// TODO: run stubprint in emu if possible
+#else
+    return add_stub(library, NULL, ordinal);
+#endif
 }
 
 void* LookupExternalByName(const char* library, const char* name)
 {
+#if X86EMU
+    if( !dllbridge )
+    {
+        dllbridge = NewBridge();
+        br_fallback = AddCheckBridge(dllbridge,vFv, stubprint_fallback, 0);
+    }
+#endif
     int i,j;
     //   return (void*)ext_unknown;
     if(library==0)
@@ -6562,9 +6678,15 @@ void* LookupExternalByName(const char* library, const char* name)
 	    if(strcmp(name, libraries[i].exps[j].name))
 		continue;
  	    if((unsigned int)(libraries[i].exps[j].func) == -1)
-		return NULL; //undefined func
+            return NULL; //undefined func
 	    	    dbgprintf("Hit: 0x%08X\n", libraries[i].exps[j].func);
-	    return libraries[i].exps[j].func;
+#if X86EMU
+                void *w = libraries[i].exps[j].wrapper;
+                if( !w ) w = vFv;
+        return AddCheckBridge(dllbridge,w, libraries[i].exps[j].func, wrlen(libraries[i].exps[j].wrapper_name));
+#else
+        return libraries[i].exps[j].func;
+#endif
 	}
     }
 
@@ -6602,7 +6724,12 @@ void* LookupExternalByName(const char* library, const char* name)
 
 no_dll_byname:
 	printf("Could not find %s:%s\n", library, name);
-	return add_stub(library, name, 0);
+
+#if X86EMU
+    return br_fallback; /// TODO: run stubprint in emu if possible
+#else
+    return add_stub(library, name, 0);
+#endif
 }
 
 void *GL_GetProcAddress( const char *name ); // defined by Xash's video backend

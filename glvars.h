@@ -18,7 +18,11 @@ typedef int GLsizeiptrARB;
 typedef char GLcharARB;
 typedef char GLchar;
 typedef unsigned int GLhandleARB;
+#if X86EMU || !defined __i386__
+#define STDCALL
+#else
 #define STDCALL __attribute__((__stdcall__))
+#endif
 #define GL_MODELVIEW	0x1700
 #define GL_PROJECTION	0x1701
 #define GL_TEXTURE	0x1702

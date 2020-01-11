@@ -22,7 +22,7 @@
 #include "wine/module.h"
 #include "wine/pe_image.h"
 #include "wine/winbase.h"
-#include "debug.h"
+#include "win32_debug.h"
 
 // Wrapper functions (to convert __cdecl to __stdcall)
 void * Loader_LoadLibrary (const char *name)

@@ -241,6 +241,9 @@ LPVOID FILE_dommap( int unix_handle, LPVOID start,
     int fd = -1;
     int pos;
     LPVOID ret;
+#if X86EMU
+    prot &= ~PROT_EXEC
+#endif
 
     if (size_high || offset_high)
         printf("offsets larger than 4Gb not supported\n");

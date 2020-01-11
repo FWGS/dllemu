@@ -4,7 +4,11 @@
 #include "windef.h"
 
 #ifndef STDCALL
+#if X86EMU || !defined __i386__
+#define STDCALL
+#else
 #define STDCALL __attribute__((__stdcall__))
+#endif
 #endif
 
 /* from objbase.h needed for ve_vfw.c */

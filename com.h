@@ -36,7 +36,11 @@ int RegisterComClass(const GUID* clsid, GETCLASSOBJECT gcs);
 int UnregisterComClass(const GUID* clsid, GETCLASSOBJECT gcs);
 
 #ifndef STDCALL
+#if X86EMU || !defined __i386__
+#define STDCALL
+#else
 #define STDCALL __attribute__((__stdcall__))
+#endif
 #endif
 
 struct IUnknown;
