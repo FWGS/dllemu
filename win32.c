@@ -4982,8 +4982,9 @@ static INT WINAPI expMessageBoxA(HWND hWnd, LPCSTR text, LPCSTR title, UINT type
 void exp_EH_prolog(void *dest);
 void exp_EH_prolog_dummy(void);
 //! just a dummy function that acts a container for the asm section
-void exp_EH_prolog_dummy(void) {
 #if !X86EMU && defined __i386__
+void exp_EH_prolog_dummy(void) {
+
   __asm__ volatile (
 // take care, this "function" may not change flags or
 // registers besides eax (which is also why we can't use
@@ -4995,11 +4996,10 @@ MANGLE(exp_EH_prolog)":    \n\t"
     "lea   -12(%esp), %esp \n\t"
     "jmp   *%eax           \n\t"
   );
-#else
-#warning "EH not implemented yet"
-#endif
 }
-
+#else
+void exp_EH_prolog(void *dest){}
+#endif
 #include <netinet/in.h>
 static WINAPI inline unsigned long int exphtonl(unsigned long int hostlong)
 {

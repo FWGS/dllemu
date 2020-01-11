@@ -242,7 +242,7 @@ LPVOID FILE_dommap( int unix_handle, LPVOID start,
     int pos;
     LPVOID ret;
 #if X86EMU
-    prot &= ~PROT_EXEC
+    prot &= ~PROT_EXEC;
 #endif
 
     if (size_high || offset_high)
