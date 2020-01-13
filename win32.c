@@ -4353,6 +4353,7 @@ static int expsprintf(char* str, const char* format, ...)
 }
 static int expsscanf(const char* str, const char* format, ...)
 {
+    printf("sscanf %s\n", format );
     va_list args;
     int r;
     dbgprintf("sscanf(%s, %s)\n", str, format);
@@ -5638,16 +5639,16 @@ static const struct exports exp_msvcrt[]={
     {"_stat",-1,(void*)&stat, iFpp},
     {"_unlink",-1,(void*)&unlink, iFp},
     FF(_errno, -1,iFv)
-    FF(strrchr, -1,pFpv)
-    FF(strchr, -1,pFpv)
+    FF(strrchr, -1,pFpu)
+    FF(strchr, -1,pFpu)
     FF(strlen, -1,iFp)
-    FF(strcpy, -1,pFpv)
-    FF(strncpy, -1,pFpv)
+    FF(strcpy, -1,pFpp)
+    FF(strncpy, -1,pFppu)
     //FF(strncat, -1)
-    FF(wcscpy, -1,pFpv)
-    FF(strcmp, -1,iFpv)
-    FF(strncmp, -1,iFpvi)
-    FF(strcat, -1,pFpv)
+    FF(wcscpy, -1,pFpp)
+    FF(strcmp, -1,iFpp)
+    FF(strncmp, -1,iFp)
+    FF(strcat, -1,pFpp)
     //FF(strtol, -1)
     //FF(strspn, -1)
     //FF(strpbrk, -1)
@@ -5661,19 +5662,19 @@ static const struct exports exp_msvcrt[]={
     WRFF(ctime, uFu)
     WRFF(abort, vFp)
     
-    FF(_stricmp,-1,iFpv)
-    FF(_strnicmp,-1,iFpv)
+    FF(_stricmp,-1,iFpp)
+    FF(_strnicmp,-1,iFppu)
     FF(_strdup,-1,pFp)
-    FF(_setjmp3,-1,iFpv)
+    FF(_setjmp3,-1,iFp)
     FF(isalnum, -1,iFi)
     FF(isspace, -1,iFi)
     FF(isalpha, -1,iFi)
     FF(isdigit, -1,iFi)
     WRFF(isupper, iFc)
-    FF(memmove, -1,pFpv)
-    FF(memcmp, -1,iFpv)
-    FF(memset, -1,pFpv)
-    FF(memcpy, -1,pFpv)
+    FF(memmove, -1,pFppu)
+    FF(memcmp, -1,iFppu)
+    FF(memset, -1,pFpiu)
+    FF(memcpy, -1,pFppu)
     FF(time, -1,uFp)
     FF(rand, -1,iFv)
     FF(srand, -1,vFi)
@@ -5687,8 +5688,8 @@ static const struct exports exp_msvcrt[]={
     FF(acos, -1,dFd)
     FF(toupper, -1,cFc)
     FF(tolower, -1,cFc)
-    FF(atoi, -1,iFc)
-    FF(atof, -1,dFc)
+    FF(atoi, -1,iFp)
+    FF(atof, -1,dFp)
     FF(tan, -1,dFd)
     FF(exp, -1, dFd)
     FF(atan, -1,dFd)
@@ -5703,10 +5704,10 @@ static const struct exports exp_msvcrt[]={
     FF(ldexp,-1, dFdi)
     FF(frexp,-1, dFdp)
     FF(sprintf,-1,iFppp)
-    FF(sscanf,-1,iFpv)
-    FF(fopen,-1,pFpv)
-    FF(fclose,-1,iFv)
-    FF(fwrite,-1,iFv)
+    FF(sscanf,-1,iFpppppp)
+    FF(fopen,-1,pFpp)
+    FF(fclose,-1,iFp)
+    FF(fwrite,-1,iFp)
     WRFF(fgets, pFp)
     //FF(feof,-1)
     WRFF(feof, iFp)
@@ -5842,8 +5843,8 @@ static const struct exports exp_ole32[]={
 // do we really need crtdll ???
 // msvcrt is the correct place probably...
 static const struct exports exp_crtdll[]={
-    FF(memcpy, -1,pFpv)
-    FF(wcscpy, -1,pFpv)
+    FF(memcpy, -1,pFppu)
+    FF(wcscpy, -1,pFpp)
 };
 static const struct exports exp_comctl32[]={
     FF(StringFromGUID2, -1, vFv)
@@ -5857,7 +5858,7 @@ static const struct exports exp_wsock32[]={
     FF(ntohl,14, uFu)
 };
 static const struct exports exp_msdmo[]={
-    FF(memcpy, -1,pFpv) // just test
+    FF(memcpy, -1,pFppu) // just test
     FF(MoCopyMediaType, -1, vFv)
     FF(MoCreateMediaType, -1, vFv)
     FF(MoDeleteMediaType, -1, vFv)
@@ -5893,17 +5894,17 @@ static const struct exports exp_oleaut32[]={
 static const struct exports exp_pncrt[]={
     FF(malloc, -1,pFi) // just test
     FF(free, -1,vFp) // just test
-    FF(fprintf, -1,iFpv) // just test
+    FF(fprintf, -1,iFpp) // just test
     {"_adjust_fdiv", -1, &_adjust_fdiv, 0},
     FF(_ftol,-1,IFv)
     FF(_initterm, -1,iFpp)
     {"??3@YAXPAX@Z", -1, expdelete, vFp},
     {"??2@YAPAXI@Z", -1, expnew, pFu},
     FF(__dllonexit, -1,pFv)
-    FF(strncpy, -1,pFpv)
+    FF(strncpy, -1,pFppu)
     FF(_CIpow,-1,dFv)
     FF(calloc,-1,pFuu)
-    FF(memmove, -1,pFpv)
+    FF(memmove, -1,pFppu)
     FF(ldexp, -1, dFdi)
     FF(frexp, -1, dFdp)
 };
@@ -5929,11 +5930,11 @@ static const struct exports exp_msvcr80[]={
     FF(_CIsin,-1,dFv)
     FF(_CIcos,-1,dFv)
     FF(_CIsqrt,-1,dFv)
-    FF(memcpy,-1,pFpv)
-    FF(memset,-1,pFpv)
-    FF(sprintf,-1,iFpv)
-    FF(strncpy,-1,pFpv)
-    FF(fopen,-1,pFpv)
+    FF(memcpy,-1,pFppu)
+    FF(memset,-1,pFpuu)
+    FF(sprintf,-1,iFpp)
+    FF(strncpy,-1,pFppu)
+    FF(fopen,-1,pFpp)
     FF(malloc,-1,pFi)
     FF(free,-1,vFp)
     FF(_initterm_e, -1,iFpp)
@@ -5959,8 +5960,8 @@ static const struct exports exp_msvcp60[]={
 };
 
 static const struct exports exp_msvcr100[]={
-    FF(memcpy, -1,pFpv)
-    FF(memset, -1,pFpv)
+    FF(memcpy, -1,pFppu)
+    FF(memset, -1,pFppu)
     FF(_initterm_e, -1,iFpp)
     FF(_initterm, -1,iFpp)
     {"??2@YAPAXI@Z", -1, expnew, pFu},
