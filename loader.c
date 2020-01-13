@@ -27,7 +27,10 @@
 // Wrapper functions (to convert __cdecl to __stdcall)
 void * Loader_LoadLibrary (const char *name)
 {
-	printf("Loader_LoadLibrary( \"%s\" )\n", name);
+#ifdef HLWRAP
+    HL_Init();
+#endif
+    printf("Loader_LoadLibrary( \"%s\" )\n", name);
     return (void *)LoadLibraryA(name);
 }
 void * Loader_GetProcAddress (void *hndl, const char *name)
