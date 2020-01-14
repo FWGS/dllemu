@@ -1,6 +1,6 @@
 #include "engine/eiface.h"
 #include "bridge.h"
-#include "generated/wrapper.h"
+#include "wrapper.h"
 #include "emu/x86emu_private.h"
 #include "emu/x87emu_private.h"
 
@@ -713,7 +713,7 @@ void HL_SpawnFunc(void *arg)
 
 void *HL_GetProcAddress( void *lib, const char *proc )
 {
-    void *addr = Loader_GetProcAddress(lib, proc);
+    void *addr = GetProcAddress(lib, proc);
     lastProcAddress = NULL;
     if( !strcmp( proc, "GiveFnptrsToDll") )
     {
@@ -739,6 +739,6 @@ void *HL_GetProcAddress( void *lib, const char *proc )
 
 void HL_Init()
 {
-    init();
+    InitX86Emu();
     serverbridge = NewBridge();
 }

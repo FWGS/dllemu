@@ -1,0 +1,3 @@
+[submodule "box86"]
+	path = box86
+	url = http://github.com/ptitseb/box86

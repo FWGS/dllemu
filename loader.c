@@ -27,16 +27,35 @@
 // Wrapper functions (to convert __cdecl to __stdcall)
 void * Loader_LoadLibrary (const char *name)
 {
+    Setup_LDT_Keeper();
+
 #ifdef HLWRAP
     HL_Init();
 #endif
     printf("Loader_LoadLibrary( \"%s\" )\n", name);
     return (void *)LoadLibraryA(name);
 }
+
+static void WINAPI (*GiveFnPtrsToDll)( void*, void* );
+
+static void GiveFnPtrsToDll_wrap( void* f, void* g )
+{
+	GiveFnPtrsToDll( f, g );
+}
+
 void * Loader_GetProcAddress (void *hndl, const char *name)
 { 
 	dbg_printf("Loader_GetProcAdderss( %p, \"%s\" )\n", hndl, name);
+#ifdef HLWRAP
+	return (void *)HL_GetProcAddress((HMODULE)hndl, name);
+#else
+	if( !strcmp( name, "GiveFnptrsToDll") )
+	{
+		GiveFnPtrsToDll = GetProcAddress((HMODULE)hndl, name);
+		return GiveFnPtrsToDll_wrap;
+	}
 	return (void *)GetProcAddress((HMODULE)hndl, name);
+#endif
 }
 void Loader_FreeLibrary(void *hndl)
 {
