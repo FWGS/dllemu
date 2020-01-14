@@ -32,7 +32,10 @@ int my_open(x86emu_t* emu, void* pathname, int32_t flags, uint32_t mode)
 {
     return -1;
 }
-
+int32_t my_accept4(x86emu_t* emu, int32_t fd, void* a, void* l, int32_t flags)
+{
+    return -1;
+}
 int32_t my_getrandom(x86emu_t* emu, void* buf, uint32_t buflen, uint32_t flags)
 {
     return 42;

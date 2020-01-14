@@ -19,7 +19,7 @@
 
 #define _BSD_SOURCE
 #define _DEFAULT_SOURCE
-
+#if defined __i386__ && !X86EMU
 #include "config.h"
 #include "ldt_keeper.h"
 
@@ -288,3 +288,9 @@ void Restore_LDT_Keeper(ldt_fs_t* ldt_fs)
     ldt_fs->fs_seg = 0;
     free(ldt_fs);
 }
+#else
+void* Setup_LDT_Keeper(void)
+{
+    return 0;
+}
+#endif
