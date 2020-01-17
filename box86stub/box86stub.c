@@ -41,6 +41,17 @@ int32_t my_getrandom(x86emu_t* emu, void* buf, uint32_t buflen, uint32_t flags)
     return 42;
 }
 
+int my_setcontext(x86emu_t* emu, void* ucp)
+{
+    return -1;
+}
+
+int my_syscall_sigaction(x86emu_t* emu, int signum, const void *act, void *oldact, int sigsetsize)
+{
+    return -1;
+}
+
+
 uint16_t Pop16(x86emu_t *emu)
 {
     uint16_t* st = ((uint16_t*)(R_ESP));

@@ -23,8 +23,8 @@ def build(bld):
 	libs = []
 	includes = [ '.', '../common', '..' ]
 	if bld.env.X86EMU:
-		source += bld.path.ant_glob(['hlwrap/*.c', 'box86/src/emu/*.c', 'box86/src/dynarec/dynarec.c', 'box86/src/wrapped/generated/*.c', 'box86/src/tools/bridge.c', 'box86/src/tools/callback.c', 'box86/src/libtools/*.c'])
-		includes += [ 'box86/src/include', 'box86/src/', 'box86/src/wrapped/generated',]
+		source += bld.path.ant_glob(['hlwrap/*.c', 'box86/src/emu/*.c', 'box86/src/dynarec/dynarec.c', 'box86stub/src/wrapped/generated/*.c', 'box86/src/tools/bridge.c', 'box86/src/tools/callback.c', 'box86/src/libtools/myalign.c'])
+		includes += [ 'box86/src/include', 'box86/src/', 'box86stub/src/wrapped/generated',]
 
 	bld.stlib(
 		source   = source,
