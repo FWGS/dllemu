@@ -74,7 +74,7 @@ static void HL_FillEngFuncs( enginefuncs_t *out, enginefuncs_t *in )
     WRAP_ENGFUNC( pfnCVarGetString, pFp )
     WRAP_ENGFUNC( pfnCVarSetFloat, vFpf )
     WRAP_ENGFUNC( pfnCVarSetString, vFpp )
-    WRAP_ENGFUNC( pfnAlertMessage, vFupV )
+    WRAP_ENGFUNC( pfnAlertMessage, vFppppp )
     WRAP_ENGFUNC( pfnEngineFprintf, vFppV )
     WRAP_ENGFUNC( pfnPvAllocEntPrivateData, pFpi )
     WRAP_ENGFUNC( pfnPvEntPrivateData, pFp )
@@ -177,6 +177,12 @@ static void HL_FillEngFuncs( enginefuncs_t *out, enginefuncs_t *in )
 DLL_FUNCTIONS *api;
 
 #include "pm_shared/pm_defs.h"
+pmtrace_t (*orig_playerTrace)( float *start, float *end, int i1, int i2);
+pmtrace_t *playerTrace(pmtrace_t *tr, float *start, float *end, int i1, int i2)
+{
+    *tr = orig_playerTrace(start,end,i1,i2);
+    return tr;
+}
 
 void WrapPmove( struct playermove_s *pm )
 {
@@ -192,7 +198,11 @@ void WrapPmove( struct playermove_s *pm )
     WRAP_FUNC( PM_PointContents, iFpp )
     WRAP_FUNC( PM_TruePointContents, iFp )
     WRAP_FUNC( PM_HullPointContents, iFpip )
-    WRAP_FUNC( PM_PlayerTrace, uFpppp )
+#if 0 // used by wrapper generator, do not remove
+    WRAP_FUNC( PM_PlayerTrace, pFpppii )
+#endif
+    orig_playerTrace = pm->PM_PlayerTrace;
+    pm->PM_PlayerTrace = AddCheckBridge( serverbridge, pFpppii, playerTrace, 0 );
     WRAP_FUNC( PM_TraceLine, pFppiii )
     WRAP_FUNC( RandomLong, iFii )
     WRAP_FUNC( RandomFloat, fFff )
