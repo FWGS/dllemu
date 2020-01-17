@@ -5426,7 +5426,7 @@ struct glfuncs
 #define WR2FF(X,Y,P,Z,W) \
 {X, Y, P, Z, #Z, W},
 
-#include "box86stub/src/wrapped/generated/wrapper.h"
+#include "wrapper.h"
 #else
 #define FF(X,Y,Z,W) \
 {#X, Y, (void*)exp##X},
