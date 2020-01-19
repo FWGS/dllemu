@@ -1,13 +1,23 @@
 #include "engine/eiface.h"
+#include "loader.h"
+
+enginefuncs_t svengfuncs;
+#include "pm_shared/pm_defs.h"
+pmtrace_t (*orig_playerTrace)( float *start, float *end, int i1, int i2);
+pmtrace_t *playerTrace(pmtrace_t *tr, float *start, float *end, int i1, int i2)
+{
+    *tr = orig_playerTrace(start,end,i1,i2);
+    return tr;
+}
+
+
+#if X86EMU
 #include "bridge.h"
 #include "wrapper.h"
 #include "emu/x86emu_private.h"
 #include "emu/x87emu_private.h"
 
 bridge_t *serverbridge;
-
-enginefuncs_t svengfuncs;
-
 #define WRAP_ENGFUNC( x, y ) out->x = AddBridge( serverbridge, y, in->x, 0 );
 x86emu_t *emu;
 
@@ -176,13 +186,6 @@ static void HL_FillEngFuncs( enginefuncs_t *out, enginefuncs_t *in )
 #define WRAP_FUNC( x, y ) out->x = AddCheckBridge( serverbridge, y, in->x, 0 );
 DLL_FUNCTIONS *api;
 
-#include "pm_shared/pm_defs.h"
-pmtrace_t (*orig_playerTrace)( float *start, float *end, int i1, int i2);
-pmtrace_t *playerTrace(pmtrace_t *tr, float *start, float *end, int i1, int i2)
-{
-    *tr = orig_playerTrace(start,end,i1,i2);
-    return tr;
-}
 
 void WrapPmove( struct playermove_s *pm )
 {
@@ -721,6 +724,14 @@ void HL_SpawnFunc(void *arg)
     R_ESP += 4;
 }
 
+
+
+void HL_Init()
+{
+    InitX86Emu();
+    serverbridge = NewBridge();
+}
+
 void *HL_GetProcAddress( void *lib, const char *proc )
 {
     void *addr = GetProcAddress(lib, proc);
@@ -746,9 +757,50 @@ void *HL_GetProcAddress( void *lib, const char *proc )
     else return NULL;
 }
 
+#else
+static void WINAPI (*GiveFnPtrsToDll)( void*, void* );
 
 void HL_Init()
 {
-    InitX86Emu();
-    serverbridge = NewBridge();
 }
+
+void (*pfnPM_Init_orig)( struct playermove_s *pm );
+
+void pfnPM_Init( struct playermove_s *pm )
+{
+    orig_playerTrace = pm->PM_PlayerTrace;
+    pm->PM_PlayerTrace = playerTrace;
+    pfnPM_Init_orig( pm );
+}
+static void (*GetEntityAPI2)( DLL_FUNCTIONS *ftable, int *version );
+void HL_GetEntityAPI2( DLL_FUNCTIONS *ftable, int *version )
+{
+    GetEntityAPI2(ftable,version);
+    pfnPM_Init_orig = ftable->pfnPM_Init;
+    ftable->pfnPM_Init = pfnPM_Init;
+}
+
+static void GiveFnPtrsToDll_wrap( void* f, void* g )
+{
+	GiveFnPtrsToDll( f, g );
+}
+void *HL_GetProcAddress( void *lib, const char *proc )
+{
+    void *addr = GetProcAddress(lib, proc);
+
+    // stdcall
+    if( !strcmp( proc, "GiveFnptrsToDll") )
+    {
+        GiveFnPtrsToDll = addr;
+        return GiveFnPtrsToDll_wrap;
+    }
+    // PlayerTrace
+    else if( !strcmp( proc, "GetEntityAPI2") )
+    {
+        GetEntityAPI2 = addr;
+        return HL_GetEntityAPI2;
+    }
+    return addr;
+}
+#endif
+
