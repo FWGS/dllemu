@@ -24,13 +24,11 @@ class rebuild_wrappers(Task.Task):
 
 @TaskGen.feature('generate')
 def task(self):
-	tsk1 = self.create_task('generate_wrapped')
-	tsk1.set_inputs(self.sources)
 	output1 = self.path.find_or_declare('box86stub/src/wrapped/wrappedwinapi_private.h')
-	tsk1.set_outputs(output1)
-	tsk2 = self.create_task('rebuild_wrappers')
-	tsk2.set_inputs(output1)
-	tsk2.set_outputs([self.path.find_or_declare('box86stub/src/wrapped/generated/wrapper.c'), self.path.find_or_declare('box86stub/src/wrapped/generated/wrapper.h')])
+	tsk1 = self.create_task('generate_wrapped', self.sources, output1)
+	tsk2 = self.create_task('rebuild_wrappers', output1,
+		[self.path.find_or_declare('box86stub/src/wrapped/generated/wrapper.c'),
+		self.path.find_or_declare('box86stub/src/wrapped/generated/wrapper.h')])
 
 def options(opt):
 	opt.add_option('--enable-dllemu', action = 'store_true', dest = 'DLLEMU', default = False, help = 'enable dll loader')
