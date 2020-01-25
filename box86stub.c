@@ -84,6 +84,63 @@ void PushString(x86emu_t *emu, const char* s)
     R_ESP -= sz;
     memcpy((void*)R_ESP, s, sz);
 }
+
+#ifdef DYNAREC
+#include <sys/mman.h>
+#include "dynablock.h"
+
+int box86_dynarec_log = LOG_DUMP;
+int box86_dynarec = 1;
+int box86_dynarec_linker = 1;
+//int box86_dynarec_forced = 0;
+
+typedef struct mmaplist_s {
+    void*         block;
+    uintptr_t     offset;           // offset in the block
+} mmaplist_t;
+
+#define MMAPSIZE (4*1024*1024)       // allocate 4Mo sized blocks
+
+uintptr_t AllocDynarecMap(box86context_t *context, int size)
+{
+    // make size 0x10 bytes aligned
+    size = (size+0x0f)&~0x0f;
+    pthread_mutex_lock(&context->mutex_mmap);
+    // look for free space
+    for(int i=0; i<context->mmapsize; ++i) {
+        if(context->mmaplist[i].offset+size < MMAPSIZE) {
+            uintptr_t ret = context->mmaplist[i].offset + (uintptr_t)context->mmaplist[i].block;
+            context->mmaplist[i].offset+=size;
+            pthread_mutex_unlock(&context->mutex_mmap);
+            return ret;
+        }
+    }
+    // no luck, add a new one !
+    int i = context->mmapsize++;    // yeah, usefull post incrementation
+    dynarec_log(LOG_DEBUG, "Ask for DynaRec Block Alloc #%d\n", context->mmapsize);
+    context->mmaplist = (mmaplist_t*)realloc(context->mmaplist, context->mmapsize*sizeof(mmaplist_t));
+    void* p = mmap(NULL, MMAPSIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if(p==MAP_FAILED) {
+        dynarec_log(LOG_INFO, "Cannot create memory map of %d byte for dynarec block #%d\n", MMAPSIZE, i);
+        --context->mmapsize;
+        pthread_mutex_unlock(&context->mutex_mmap);
+        return 0;
+    }
+    context->mmaplist[i].block = p;
+    context->mmaplist[i].offset=size;
+    pthread_mutex_unlock(&context->mutex_mmap);
+    return (uintptr_t)p;
+}
+
+dynablocklist_t* GetDynablocksFromAddress(box86context_t *context, uintptr_t addr)
+{
+    return context->dynablocks;
+}
+
+#endif
+
+
+
 extern x86emu_t *emu;
 /* context used only in trace and log calls, probably not needed */
 static box86context_t context;
@@ -101,5 +158,8 @@ void InitX86Emu( void )
     // not used
 //    context.emu = emu;
     SetupX86Emu(emu);
+#ifdef DYNAREC
+    context.dynablocks = NewDynablockList(0, 0, 0);
+#endif
 }
 #endif
